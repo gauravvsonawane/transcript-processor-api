@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.params import Depends
 from notion_client import Client
 from dotenv import load_dotenv
 
@@ -28,6 +29,7 @@ from app.ai_service import (
 
 load_dotenv()
 
+API_KEY = os.getenv("API_KEY")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 
 if not NOTION_TOKEN:
@@ -40,6 +42,9 @@ app = FastAPI()
 # --------------------------------------------------
 # Helper Functions
 # --------------------------------------------------
+def verify_api_key(x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 def get_unprocessed_rows(all_rows):
     unprocessed_rows = []
@@ -99,7 +104,7 @@ def get_page(page_id: str):
 
 
 @app.get("/process-transcripts")
-def process_transcript():
+def process_transcript(api_key: str = Depends(verify_api_key)):
     """
     1. fetch all the rows from main db
     2. get unprocessed rows from all rows
