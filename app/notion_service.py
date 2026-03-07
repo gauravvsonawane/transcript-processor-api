@@ -1,4 +1,4 @@
-from app.config import (TRANSCRIPTS_DATA_SOURCE_ID)
+from app.config import (TRANSCRIPTS_DATA_SOURCE_ID, STATUS_READY, STATUS_NOT_READY, STATUS_DONE, STATUS_ERROR)
 from notion_client import Client
 from dotenv import load_dotenv
 import os
@@ -14,14 +14,15 @@ if not NOTION_TOKEN:
     raise ValueError("NOTION_TOKEN not found in environment variables.")
 
 notion = Client(auth=NOTION_TOKEN,
-notion_version="2025-09-03")
+                notion_version="2025-09-03")
 
-def mark_row_as_processed(page_id: str):
+
+def update_row_status(page_id: str, status: str):
     notion.pages.update(
         page_id=page_id,
         properties={
-            "IsProcessed": {
-                "checkbox": True
+            "Status": {
+                "status": {"name": status}
             }
         }
     )
@@ -40,8 +41,8 @@ def query_data_source():
             data_source_id=TRANSCRIPTS_DATA_SOURCE_ID,
             start_cursor=next_cursor
         )
-        print("1____________________________________")
-        print(response)
+        # print("1____________________________________")
+        # print(response)
 
         results.extend(response["results"])
 
@@ -51,6 +52,7 @@ def query_data_source():
             break
 
     return results
+
 
 def extract_properties(page):
     """Convert Notion properties into clean Python dict."""
@@ -89,6 +91,7 @@ def extract_properties(page):
 
     return clean
 
+
 def extract_page_content(page_id):
     """
     Fetch full page block content.
@@ -117,6 +120,7 @@ def extract_page_content(page_id):
 
     return "\n".join(text)
 
+
 def get_page_obj(page_id: str):
     # Retrieve page
     page = notion.pages.retrieve(page_id=page_id)
@@ -132,6 +136,7 @@ def get_page_obj(page_id: str):
         "properties": properties,
         "content": content
     }
+
 
 def create_notion_page_in_db(title: str, markdown_content: str, db_id: str):
     response = notion.request(
@@ -149,14 +154,14 @@ def create_notion_page_in_db(title: str, markdown_content: str, db_id: str):
         }
     )
 
-
     return response["id"]
+
 
 def connect_notion_page_to_row(main_page_id: str, relation_column_name: str, relation_page_id: str):
     notion.pages.update(
         page_id=main_page_id,
         properties={
-            relation_column_name: {   # <-- EXACT relation column name in Main DB
+            relation_column_name: {  # <-- EXACT relation column name in Main DB
                 "relation": [
                     {"id": relation_page_id}
                 ]

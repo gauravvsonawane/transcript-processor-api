@@ -6,7 +6,11 @@ from dotenv import load_dotenv
 
 from app.config import (
     NOTES_DB_ID,
-    SUMMARY_DB_ID
+    SUMMARY_DB_ID,
+    STATUS_READY,
+    STATUS_NOT_READY,
+    STATUS_DONE,
+    STATUS_ERROR
 )
 
 from app.notion_service import (
@@ -14,14 +18,13 @@ from app.notion_service import (
     create_notion_page_in_db,
     connect_notion_page_to_row,
     query_data_source,
-    mark_row_as_processed
+    update_row_status
 )
 
 from app.ai_service import (
     get_ai_summary,
     get_ai_notes
 )
-
 
 # --------------------------------------------------
 # Configuration
@@ -46,43 +49,59 @@ def verify_api_key(x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-def get_unprocessed_rows(all_rows):
-    unprocessed_rows = []
-    for row in all_rows:
-        is_row_processed = row["properties"]["IsProcessed"]["checkbox"]
-        if not is_row_processed:
-            unprocessed_rows.append(row)
 
-    return unprocessed_rows
+def get_ready_rows(all_rows):
+    ready_rows = []
+    for row in all_rows:
+        # Safely get status
+        status_prop = row["properties"].get("Status")
+        print("status_prop")
+
+        if status_prop and status_prop.get("status"):
+            status = status_prop["status"].get("name")
+            if status == STATUS_READY:
+                ready_rows.append(row)
+    return ready_rows
+
 
 
 def process_a_row(row):
-    # extract meta-data and content from row
-    # print("Properties")
-    # print(row["properties"])
     main_page_id = row["id"]
-    transcript_page_id = row["properties"]["Transcript"]["relation"][0]["id"]
-    transcript_page_obj = get_page_obj(transcript_page_id)
-    transcript_title = transcript_page_obj["properties"]["Title"]
-    transcript_content = transcript_page_obj["content"]
 
-    # get processed info from AI
-    ai_summary = get_ai_summary(transcript_title + " " + transcript_content)
-    ai_notes = get_ai_notes(transcript_title + " " + transcript_content)
+    try:
+        # extract meta-data and content from row
+        transcript_page_id = row["properties"]["Transcript"]["relation"][0]["id"]
+        transcript_page_obj = get_page_obj(transcript_page_id)
+        transcript_title = transcript_page_obj["properties"]["Title"]
+        transcript_content = transcript_page_obj["content"]
 
-    print(ai_summary)
-    print('+++++++++++++++++++++++++++++++++++')
-    print(ai_notes)
+        # get processed info from AI
+        ai_summary = get_ai_summary(transcript_title + " " + transcript_content)
+        ai_notes = get_ai_notes(transcript_title + " " + transcript_content)
 
-    # create ai_summary and ai_notes page in notion
-    new_summary_page_id = create_notion_page_in_db(transcript_title, ai_summary, SUMMARY_DB_ID)
-    new_notes_page_id = create_notion_page_in_db(transcript_title, ai_notes, NOTES_DB_ID)
+        print(ai_summary)
+        print('+++++++++++++++++++++++++++++++++++')
+        print(ai_notes)
 
-    # connect these new notion pages to the respective row and column
-    connect_notion_page_to_row(main_page_id, "Summary", new_summary_page_id)
-    connect_notion_page_to_row(main_page_id, "Notes", new_notes_page_id)
+        # create ai_summary and ai_notes page in notion
+        new_summary_page_id = create_notion_page_in_db(transcript_title, ai_summary, SUMMARY_DB_ID)
+        new_notes_page_id = create_notion_page_in_db(transcript_title, ai_notes, NOTES_DB_ID)
 
-    mark_row_as_processed(main_page_id)
+        # connect these new notion pages to the respective row and column
+        connect_notion_page_to_row(main_page_id, "Summary", new_summary_page_id)
+        connect_notion_page_to_row(main_page_id, "Notes", new_notes_page_id)
+
+        # Mark row as done
+        update_row_status(main_page_id, STATUS_DONE)
+
+    except Exception as e:
+        print(f"Error processing row {main_page_id}: {str(e)}")
+        # Mark row as error
+        update_row_status(main_page_id, STATUS_ERROR)
+        raise
+
+
+
 
 # --------------------------------------------------
 # Routes
@@ -92,6 +111,7 @@ def process_a_row(row):
 def root():
     return {"message": "Notion Transcript API running."}
 
+
 @app.get("/page/{page_id}")
 def get_page(page_id: str):
     try:
@@ -100,7 +120,6 @@ def get_page(page_id: str):
 
     except Exception as e:
         return {"error": str(e)}
-
 
 
 @app.get("/process-transcripts")
@@ -118,8 +137,9 @@ def process_transcript(api_key: str = Depends(verify_api_key)):
     """
 
     results = query_data_source()
-    unprocessed_rows = get_unprocessed_rows(results)
-    for row in unprocessed_rows:
+    ready_rows = get_ready_rows(results)
+    print(ready_rows)
+    for row in ready_rows:
         process_a_row(row)
 
-    return {"processed_rows": len(unprocessed_rows)}
+    return {"processed_rows": len(ready_rows)}
